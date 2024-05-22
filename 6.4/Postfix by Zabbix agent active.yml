@@ -13,7 +13,7 @@ zabbix_export:
         requires pflogsumm.pl, logtail to be installed on the host.
       vendor:
         name: RobinR1
-        version: 6.4-0
+        version: 6.4-0.1
       groups:
         - name: Templates/Applications
       items:
