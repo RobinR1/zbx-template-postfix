@@ -4,39 +4,49 @@
 
 For Zabbix version: 6.4
 
-This template monitors a Postfix instance 
-host for available patches and general package updates by repository. Using discovery it will create items and
-triggers for all required patch categories/severities and/or package repositories, configurable using macro's. 
-Additionally it will feed Zabbix with a list of known vulnerabilities (as known by Zypper) and package names of the available updates.
+This template monitors a Postfix instance's processes and queues using the Zabbix Agent, 
+[pflogsumm.pl](https://jimsun.linxnet.com/postfix_contrib.html), [logtail](https://sourceforge.net/projects/logdigest/), [postqueue](http://www.postfix.org/postqueue.1.html) and a helper script.
+
+Monitored items are:
+  - Number of different running Postfix processes
+  - CPU and Memory usage of different Postfix processes
+  - Postfix version
+  - Number of messages in different queue's
+  - Bounced, Deferred and Reject reasons
+  - Mail volumes delivered/received in bytes
+
+This template is set up to use Zabbix Agent active mode, but can be adapted easily to use passive mode by mass updating all "Zabbix agent (active)" items to "Zabbix agent" items
 
 This template was tested on:
+  - openSUSE Leap 15.4, 15.5
+  - SLES 15 SP5
+but should work on any Linux 
 
-- openSUSE Leap 15.2, 15.3, 15.4, 15.5
-but should work on any SLES/openSUSE Leap 15.x
-
-Accompanying script requires Python >= 3.4
+## Requirements
+  - Postfix
+  - Zabbix Agent or Zabbix Agent 2
+  - Bash
+  - [Logtail](https://sourceforge.net/projects/logdigest/) (`logtail` system package on Suse and Debian. On CentOS/Fedora and alike, it should be included in the `logcheck` package)
+  - Perl 5.004 or higher
+  - [pflogsumm.pl](https://jimsun.linxnet.com/postfix_contrib.html)
+    (v1.1.3 did not work for me, but v1.1.5 does. Test the script manually as you may need to install extra Perl dependencies 
+    like [Date::Calc](http://search.cpan.org/dist/Date-Calc/)).
 
 ## Setup
 
-On all hosts you want to monitor:
-- Install packages `python3` and `zabbix-sender` 
-- Copy `scripts/zypper-updateinfo.py` to `/etc/zabbix/scripts`
-- Check `zabbix_sender_bin`, `zabbix_agent_config` paths and the `hostname_name` variable in `scripts/zypper-updateinfo.py` and adapt if required
-- Copy Systemd unit files 
-  - `systemd/zabbix-template-module-zypper-updateinfo.service` and 
-  - `systemd/zabbix-template-module-zypper-updateinfo.timer` 
-  to `/etc/systemd/system`
-- By default the systemd timer will execute the script every hour. Change this in the `.timer`-file to your needs.
-- If you chose to put the `zypper-updateinfo.py` script somewhere else than `/etc/zabbix/scripts`, adjust the path in the `.service`-file
-- Enable and start the Systemd timer:
-  ```
-  systemctl daemon-reload
-  systemctl enable zabbix-template-module-zypper-updateinfo.timer
-  systemctl start zabbix-template-module-zypper-updateinfo.timer
-  ```
+On the host with a running Postfix service you want to monitor:
+  - Install the Zabbix Agent or Zabbix Agent 2 package if it is not yet installed on the host.
+  - Install `logtail`.
+  - Install [pflogsumm.pl](https://jimsun.linxnet.com/postfix_contrib.html) in `/usr/local/bin` and make sure the script is executable.
+  - Copy `files/scripts/postfix_get_spool.sh` to `/etc/zabbix/scripts` and ensure it is set executable.
+    - Check `postfix_config` variable in `/etc/zabbix/scripts/postfix_get_spool.sh` and adapt if required.
+  - Copy `files/sudoers.d/zabbix_postfix` to `/etc/sudoers.d`
+  - Copy `files/zabbix_agentd.d/template_app_postfix.conf` to `/etc/zabbix/zabbix_agent.d` or `/etc/zabbix/zabbix_agent2.d` 
+    depending on which version of the Zabbix Agent you use and ensure that directory is set as an `Include` in your main Zabbix agent configuration file.
+
 On Zabbix server:
-- Import the `template_module_zypper_updateinfo.yaml` template into Zabbix
-- Assign the template "Template Module Zypper updateinfo by Zabbix trapper" to the host(s) you want to monitor
+  - Import the `Postfix by Zabbix agent active.yaml` template into Zabbix
+  - Assign the template "Postfix by Zabbix agent active" to the host you want to monitor
 
 ## Zabbix configuration
 
@@ -46,17 +56,14 @@ No specific Zabbix configuration is required
 
 |Name|Description|Default|
 |----|-----------|-------|
-|{$ZYPPER.PATCH.CATEGORY_FILTER} |<p>Patch categories to monitor for new patches</p>|`^(security\|recommended\|optional\|feature\|document\|yast)$` |
-|{$ZYPPER.PATCH.SEVERITY_FILTER} |<p>Patch severities to monitor for new patches</p>|`^(critical\|important\|moderate\|low\|unspecified)$` |
-|{$ZYPPER.REPO.ALIAS_FILTER} |<p>Filter on alias of repositories to discover</p>| `^(.*)$` |
-|{$ZYPPER.REPO.AUTOREFRESH_FILTER} |<p>Filter on 'autorefresh' attribute of repositories to discover</p>|`^(0\|1)$` |
-|{$ZYPPER.REPO.ENABLED_FILTER} |<p>Filter on 'enabled' attribute of repositories to discover</p>|`1` |
-|{$ZYPPER.UPDATEINFO.MAXAGE} |<p>Max age of available security updates information</p>|`2d` |
-
-#### Notes about $ZYPPER.UPDATEINFO.MAXAGE
-
-The template will trigger a warning if no new information was received within the time set by this macro. Don't set this to 1h if the script is executed only once an hour since the script may take some time to finish collecting information from Zypper so it may take a little longer than that hour for new data to actually reach the Zabbix server.
+|{$POSTFIX.ACTIVE.MAX} |<p>Max number of messages in Active queue</p>|`50` |
+|{$POSTFIX.BOUNCE.MAX} |<p>Max number of bounced messages within POSTFIX.TRIGGER.PERIOD</p>|`50` |
+|{$POSTFIX.DEFERRED.MAX} |<p>Max number of deferred messages in queue</p>| `50` |
+|{$POSTFIX.HOLD.MAX} |<p>Max number of held messages in queue</p>|`200` |
+|{$POSTFIX.REJECTED.MAX} |<p>Max number of rejected messages within POSTFIX.TRIGGER.PERIOD</p>|`20` |
+|{$POSTFIX.TRIGGER.PERIOD} |<p>Time period to check for too many bounced or rejected mails. Context "bounced" or "rejected" is supported.</p>|`30m` |
+|{$POSTFIX_USER} |<p>User running unprivileged postfix processes</p>|`postfix` |
 
 ## Feedback
 
-Please report any issues with the template at https://github.com/RobinR1/zbx-template-zypper-updateinfo/issues
+Please report any issues with the template at https://github.com/RobinR1/zbx-template-postfix/issues
